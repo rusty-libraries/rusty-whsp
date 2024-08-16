@@ -1,0 +1,10 @@
+[package]
+name = "rusty-whsp"
+description = "A Rust library designed to handle configuration parsing for command-line applications"
+author = "Bufferization"
+version = "0.1.5"
+license = "MIT"
+repository = "https://github.com/rusty-libraries/rusty-whsp"
+homepage = "https://rusty-libraries.github.io/rusty-whsp/#/"
+readme = "README.md"
+edition = "2021"
