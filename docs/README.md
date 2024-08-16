@@ -18,7 +18,7 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-rusty-whsp = "0.1.0"
+rusty-whsp = "0.1.6"
 ```
 
 ## Usage Guide
