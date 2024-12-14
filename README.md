@@ -32,7 +32,7 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-rusty-whsp = "0.1.6"
+rusty-whsp = "0.1.7"
 ```
 
 ## Quick Start
