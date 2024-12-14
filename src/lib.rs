@@ -1,13 +1,11 @@
-use std::collections::HashMap;
-use std::env;
-use std::fmt;
+use std::{borrow::Cow, collections::HashMap, env, fmt};
 
 pub type ConfigType = &'static str;
 
 #[derive(Debug, Clone)]
-pub enum ValidValue {
+pub enum ValidValue<'a> {
     Number(i64),
-    String(String),
+    String(Cow<'a, str>),
     Boolean(bool),
 }
 
@@ -28,7 +26,7 @@ pub struct WhspOptions {
 pub struct ConfigOptionBase<'a> {
     pub config_type: ConfigType,
     pub short: Option<&'a str>,
-    pub default: Option<ValidValue>,
+    pub default: Option<ValidValue<'a>>,
     pub description: Option<&'a str>,
     pub validate: Option<Validator>,
     pub multiple: bool,
@@ -87,13 +85,19 @@ impl<'a> Whsp<'a> {
         }
     }
 
-    pub fn validate_name(&mut self, name: &'a str, option: &ConfigOptionBase<'a>) -> Result<(), String> {
+    pub fn validate_name(
+        &mut self,
+        name: &'a str,
+        option: &ConfigOptionBase<'a>,
+    ) -> Result<(), String> {
         if !name.chars().all(char::is_alphanumeric) {
-            return Err(format!("Invalid option name: {}, must be alphanumeric.", name));
+            return Err(format!(
+                "Invalid option name: {name}, must be alphanumeric."
+            ));
         }
         if let Some(short) = option.short {
             if self.short_options.contains_key(short) {
-                return Err(format!("Short option {} is already in use.", short));
+                return Err(format!("Short option {short} is already in use."));
             }
             self.short_options.insert(short, name);
         }
@@ -110,47 +114,51 @@ impl<'a> Whsp<'a> {
         }
     }
 
-    pub fn parse_raw(&self, args: &[String]) -> OptionsResult {
+    pub fn parse_raw(&self, args: &'a [String]) -> OptionsResult<'a> {
         let mut values = HashMap::new();
         let mut positionals = Vec::new();
         let mut i = 0;
-        
+
         while i < args.len() {
             let arg = &args[i];
-            if arg.starts_with("--") {
-                let key = &arg[2..];
+            if let Some(key) = arg.strip_prefix("--") {
                 if let Some(config) = self.config_set.get(key) {
                     if config.config_type == "boolean" {
-                        values.insert(key.to_string(), ValidValue::Boolean(true));
+                        values.insert(key, ValidValue::Boolean(true));
                     } else if i + 1 < args.len() {
                         let val = &args[i + 1];
-                        values.insert(key.to_string(), match config.config_type {
-                            "string" => ValidValue::String(val.to_string()),
-                            "number" => ValidValue::Number(val.parse().unwrap()),
-                            _ => panic!("Unknown config type"),
-                        });
+                        values.insert(
+                            key,
+                            match config.config_type {
+                                "string" => ValidValue::String(val.into()),
+                                "number" => ValidValue::Number(val.parse().unwrap()),
+                                _ => panic!("Unknown config type"),
+                            },
+                        );
                         i += 1;
                     }
                 }
-            } else if arg.starts_with('-') {
-                let short = &arg[1..];
+            } else if let Some(short) = arg.strip_prefix('-') {
                 if let Some(&key) = self.short_options.get(short) {
                     if let Some(config) = self.config_set.get(key) {
                         if config.config_type == "boolean" {
-                            values.insert(key.to_string(), ValidValue::Boolean(true));
+                            values.insert(key, ValidValue::Boolean(true));
                         } else if i + 1 < args.len() {
                             let val = &args[i + 1];
-                            values.insert(key.to_string(), match config.config_type {
-                                "string" => ValidValue::String(val.to_string()),
-                                "number" => ValidValue::Number(val.parse().unwrap()),
-                                _ => panic!("Unknown config type"),
-                            });
+                            values.insert(
+                                key,
+                                match config.config_type {
+                                    "string" => ValidValue::String(val.into()),
+                                    "number" => ValidValue::Number(val.parse().unwrap()),
+                                    _ => panic!("Unknown config type"),
+                                },
+                            );
                             i += 1;
                         }
                     }
                 }
             } else {
-                positionals.push(arg.clone());
+                positionals.push(arg.as_str());
             }
             i += 1;
         }
@@ -163,7 +171,10 @@ impl<'a> Whsp<'a> {
 
     pub fn validate(&self, o: &HashMap<String, ValidValue>) -> Result<(), String> {
         for (field, value) in o {
-            let config = self.config_set.get(field.as_str()).ok_or(format!("Unknown config option: {}", field))?;
+            let config = self
+                .config_set
+                .get(field.as_str())
+                .ok_or(format!("Unknown config option: {field}"))?;
             validate_options(config, value)?;
         }
         Ok(())
@@ -173,31 +184,33 @@ impl<'a> Whsp<'a> {
         if let Some(prefix) = self.options.env_prefix {
             for (key, option) in self.config_set.iter_mut() {
                 let env_key = to_env_key(prefix, key);
-                match env::var(&env_key) {
-                    Ok(val) => {
-                        let valid_val = from_env_val(&val, option.config_type);
-                        option.default = Some(valid_val);
-                    },
-                    Err(_) => {}
+                if let Ok(val) = env::var(&env_key) {
+                    let valid_val = from_env_val(val, option.config_type);
+                    option.default = Some(valid_val);
                 }
             }
         }
     }
 }
 
-impl fmt::Display for ValidValue {
+impl fmt::Display for ValidValue<'_> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            ValidValue::Number(val) => write!(f, "{}", val),
-            ValidValue::String(val) => write!(f, "{}", val),
-            ValidValue::Boolean(val) => write!(f, "{}", val),
+            ValidValue::Number(val) => write!(f, "{val}"),
+            ValidValue::String(val) => write!(f, "{val}"),
+            ValidValue::Boolean(val) => write!(f, "{val}"),
         }
     }
 }
 
 impl<'a> ConfigOptionBase<'a> {
-    pub fn new(config_type: ConfigType, multiple: bool, short: Option<&'a str>, description: Option<&'a str>) -> Self {
-        ConfigOptionBase {
+    pub const fn new(
+        config_type: ConfigType,
+        multiple: bool,
+        short: Option<&'a str>,
+        description: Option<&'a str>,
+    ) -> Self {
+        Self {
             config_type,
             short,
             default: None,
@@ -209,18 +222,20 @@ impl<'a> ConfigOptionBase<'a> {
 
     pub fn validate_value(&self, value: &ValidValue) -> bool {
         if let Some(ref validate) = self.validate {
-            match validate {
+            match *validate {
                 Validator::Regex(regex) => matches!(value, ValidValue::String(s) if regex == s),
-                Validator::NumberRange(min, max) => matches!(value, ValidValue::Number(num) if *num >= *min && *num <= *max),
+                Validator::NumberRange(min, max) => {
+                    matches!(value, ValidValue::Number(num) if *num >= min && *num <= max)
+                },
                 Validator::None => true,
             }
         } else {
-            match (self.config_type, value) {
-                ("string", ValidValue::String(_)) => true,
-                ("number", ValidValue::Number(_)) => true,
-                ("boolean", ValidValue::Boolean(_)) => true,
-                _ => false,
-            }
+            matches!(
+                (self.config_type, value),
+                ("string", ValidValue::String(_))
+                    | ("number", ValidValue::Number(_))
+                    | ("boolean", ValidValue::Boolean(_))
+            )
         }
     }
 }
@@ -229,32 +244,39 @@ pub fn to_env_key(prefix: &str, key: &str) -> String {
     format!("{}_{}", prefix.to_uppercase(), key.to_uppercase())
 }
 
-pub fn from_env_val(env: &str, config_type: &str) -> ValidValue {
+pub fn from_env_val<'a, E: Into<Cow<'a, str>>>(env: E, config_type: &str) -> ValidValue<'a> {
     match config_type {
-        "string" => ValidValue::String(env.to_string()),
-        "number" => ValidValue::Number(env.parse().unwrap()),
-        "boolean" => ValidValue::Boolean(env == "1"),
+        "string" => ValidValue::String(env.into()),
+        "number" => ValidValue::Number(env.into().parse().unwrap()),
+        "boolean" => ValidValue::Boolean(env.into() == "1"),
         _ => panic!("Unknown config type"),
     }
 }
 
 pub fn to_env_val(value: &ValidValue) -> String {
     match value {
-        ValidValue::String(v) => v.clone(),
+        ValidValue::String(v) => v.to_string(),
         ValidValue::Number(v) => v.to_string(),
-        ValidValue::Boolean(v) => if *v { "1".to_string() } else { "0".to_string() },
+        ValidValue::Boolean(v) => {
+            if *v {
+                "1"
+            } else {
+                "0"
+            }
+        }
+        .to_string(),
     }
 }
 
 pub fn validate_options(config: &ConfigOptionBase, value: &ValidValue) -> Result<(), String> {
     if !config.validate_value(value) {
-        return Err(format!("Invalid value {:?} for option", value));
+        return Err(format!("Invalid value {value:?} for option"));
     }
     Ok(())
 }
 
 #[derive(Debug)]
-pub struct OptionsResult {
-    pub values: HashMap<String, ValidValue>,
-    pub positionals: Vec<String>,
+pub struct OptionsResult<'a> {
+    pub values: HashMap<&'a str, ValidValue<'a>>,
+    pub positionals: Vec<&'a str>,
 }
